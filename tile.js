@@ -7,6 +7,9 @@ var fs = require('mz/fs');
 var path = require('path');
 var mkdirp = require('mkdirp-then');
 
+const DEFAULT_EMPTY_THRESHOLD = 0.13;
+const DEFAULT_DUPE_THRESHOLD = 0.12;
+
 function decodeBase64Image(dataString) {
     var matches = dataString.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/),
     response = {};
@@ -45,22 +48,6 @@ class Tile {
             while (remainingHeight > 0) {
                 var tileHeight = Math.min(maxTileHeight, remainingHeight);
 
-                // var newImg = new Jimp(tileWidth, tileHeight);
-                // img.scan(
-                //     remainingWidth - tileWidth,
-                //     remainingHeight - tileHeight,
-                //     tileWidth,
-                //     tileHeight, function (x, y, idx) {
-                //         console.log(x - remainingWidth - tileWidth, y - remainingHeight - tileHeight);
-                //     // x, y is the position of this pixel on the image
-                //     // idx is the position start position of this rgba tuple in the bitmap Buffer
-                //     // this is the image
-                //     var r   = this.bitmap.data[ idx + 0 ];
-                //     var g = this.bitmap.data[ idx + 1 ];
-                //     var b  = this.bitmap.data[ idx + 2 ];
-                //     var a = this.bitmap.data[ idx + 3 ];
-                //     newImg.setPixelColor(Jimp.rgbaToInt(r, g, b, a), x, y);
-                // });
                 tiles.push(new Tile(
                     img.clone().crop(remainingWidth - tileWidth, remainingHeight - tileHeight, tileWidth, tileHeight),
                     tileSheetName,
@@ -76,41 +63,87 @@ class Tile {
         return tiles;
     }
 
-    static onlyValid(tiles) {
-        return Tile.dedupe(Tile.filterOutEmpty(tiles));
+    static rejectInvalid(tiles, rejectedPath) {
+        return Tile.filterOutEmpty(tiles, DEFAULT_EMPTY_THRESHOLD, rejectedPath)
+            .then(function(nonEmptyTiles){
+                return Tile.dedupe(nonEmptyTiles, DEFAULT_DUPE_THRESHOLD, rejectedPath);
+            });
     }
 
-    static filterOutEmpty(tiles) {
+    static filterOutEmpty(tiles, dupeThreshold, rejectedPath) {
         var emptyImg;
-        var dupeThreshold = 0.13;
+        if (_.isUndefined(dupeThreshold)) dupeThreshold = DEFAULT_EMPTY_THRESHOLD;
+
         console.log("Filtering out empty tiles...");
+        var promise = Promise.resolve();
+        
+        if (rejectedPath) {
+            promise = promise
+                .then(function(){
+                    var emptyDir = path.join(rejectedPath, 'Empty');
+                    return mkdirp(emptyDir)
+                        .then(function(){
+                            return emptyDir;
+                        });
+                })
+        }
+        var writePromises = [];
         var result = _.filter(tiles, function(tile){
             if (tile.hash == '00000000000') {
-                return false;
+                var isDupe = true;
+            } else {
+                if (!emptyImg || (emptyImg.bitmap.width != tile.width || emptyImg.bitmap.height != tile.height)) {
+                    emptyImg = new Jimp(tile.width, tile.height);
+                }
+
+                var distance = Jimp.distance(emptyImg, tile.img); // perceived distance
+                var diff = Jimp.diff(emptyImg, tile.img);         // pixel difference
+
+                isDupe = distance < dupeThreshold && diff.percent < dupeThreshold;
             }
 
-            if (!emptyImg || (emptyImg.bitmap.width != tile.width || emptyImg.bitmap.height != tile.height)) {
-                emptyImg = new Jimp(tile.width, tile.height);
+            if (rejectedPath && isDupe) {
+                writePromises.push(
+                    promise
+                        .then(function(emptyDir){
+                            return tile.img.write(path.format({dir: emptyDir, base: 'empty-' + tile.hash + '.png'}));
+                        })
+                );
             }
 
-            var distance = Jimp.distance(emptyImg, tile.img); // perceived distance
-            var diff = Jimp.diff(emptyImg, tile.img);         // pixel difference
-
-            return !(distance < dupeThreshold && diff.percent < dupeThreshold);
+            return !isDupe;
         });
 
-        console.log("Filtered out", tiles.length - result.length, "empty tiles.");
-        return result;
-
+        return promise
+            .then(function(){
+                return Promise.all(writePromises);
+            })
+            .then(function(){
+                console.log("Filtered out", tiles.length - result.length, "empty tiles.");
+                return result;
+            });
     }
-    static dedupe(tiles, dupeThreshold) {
-        if (_.isUndefined(dupeThreshold)) dupeThreshold = 0.11;
+
+    static dedupe(inputTiles, dupeThreshold, rejectedPath) {
+        if (_.isUndefined(dupeThreshold)) dupeThreshold = DEFAULT_DUPE_THRESHOLD;
         console.log("Deduping tiles...");
-        tiles = _.uniqBy(tiles, (tile=>tile.hash));
-        var result = tiles;
+
+        var tiles = _.uniqBy(inputTiles, (tile=>tile.hash));
         var checked = {};
         var dupeTiles = {};
         var result = [];
+        var promise = Promise.resolve();
+        if (rejectedPath) {
+            promise = promise
+                .then(function(){
+                    var emptyDir = path.join(rejectedPath, 'Dupes');
+                    return mkdirp(emptyDir)
+                        .then(function(){
+                            return emptyDir;
+                        });
+                });
+        }
+        var writePromises = [];
         for (var ii = 0; ii < tiles.length; ++ii) {
             for (var jj = 0; jj < tiles.length; ++jj) {
                 if (ii != jj && !(checked[ii] && checked[ii][jj])) {
@@ -123,16 +156,17 @@ class Tile {
                     checked[jj][ii] = 1;
 
                     if (distance < dupeThreshold && diff.percent < dupeThreshold) {
+                        if (rejectedPath) {
+                            (function(ii,jj){
+                                writePromises.push(
+                                    promise
+                                        .then(function(dupeDir){
+                                            return tiles[ii].img.write(path.format({dir: dupeDir, base: tiles[ii].hash + '-dupe-of-' + tiles[jj].hash + '.png'}));
+                                        })
+                                )
+                            })(ii,jj);
+                        }
                         dupeTiles[ii] = jj;
-                        (function(ii,jj){
-                            var pairFolder = path.join(__dirname, 'DupePairs', tiles[jj].hash + '-' + tiles[ii].hash);
-                            mkdirp(pairFolder)
-                                .then(function(){
-                                    tiles[ii].img.write(path.format({dir: pairFolder, base: 'rejected-' + tiles[ii].hash + '.png'}));
-                                    tiles[jj].img.write(path.format({dir: pairFolder, base: tiles[jj].hash + '.png'}));
-                                });
-                        })(ii,jj);
-
                         break;
                     }
                 }
@@ -143,40 +177,43 @@ class Tile {
             }
         }
 
-        var dupes = _.keys(dupeTiles);
-        if (dupes.length) {
-            console.log("Removed", dupes.length, "dupes.");
-        }
-        return result;
-    }
-
-    tag(tags) {
-        var self = this;
-        return inquirer.prompt([{
-                type: 'input',
-                name: 'addedTags',
-                message: 'Add case-insensitive, comma-separated tags (orientation, material, theme, etc.).',
-                default: tags && tags.length ? tags.join(',') : ''
-            }])
-            .then(function(answer){
-                if (answer.addedTags) {
-                    var tags = _.map(_.union(self.tags, answer.addedTags.split(',')), (string => string.toLowerCase().trim()));
-                    return inquirer.prompt([{
-                            type: 'confirm',
-                            name: 'confirmTags',
-                            message: 'New tags will be: ' + tags.join(", "),
-                            default: 'y'
-                        }])
-                        .then(function(answer){
-                            if (answer.confirmTags) {
-                                self.tags = tags;
-                            } else {
-                                return self.tag();
-                            }
-                        })
-                }
+        return promise
+            .then(function(){
+                return Promise.all(writePromises);
+            })
+            .then(function(){
+                console.log("Removed", inputTiles.length - result.length, "dupes.");
+                return result;
             });
     }
+
+    // tag(tags) {
+    //     var self = this;
+    //     return inquirer.prompt([{
+    //             type: 'input',
+    //             name: 'addedTags',
+    //             message: 'Add case-insensitive, comma-separated tags (orientation, material, theme, etc.).',
+    //             default: tags && tags.length ? tags.join(',') : ''
+    //         }])
+    //         .then(function(answer){
+    //             if (answer.addedTags) {
+    //                 var tags = _.map(_.union(self.tags, answer.addedTags.split(',')), (string => string.toLowerCase().trim()));
+    //                 return inquirer.prompt([{
+    //                         type: 'confirm',
+    //                         name: 'confirmTags',
+    //                         message: 'New tags will be: ' + tags.join(", "),
+    //                         default: 'y'
+    //                     }])
+    //                     .then(function(answer){
+    //                         if (answer.confirmTags) {
+    //                             self.tags = tags;
+    //                         } else {
+    //                             return self.tag();
+    //                         }
+    //                     })
+    //             }
+    //         });
+    // }
 
     confirm() {
         var self = this;
@@ -189,8 +226,8 @@ class Tile {
                         default: 1,
                         choices: [
                             {name: 'Skip', value: 'skip', short: 's'},
-                            {name: 'Add', value: 'add', short: 'a'},
-                            {name: 'Tag', value: 'tag', short: 't'}
+                            {name: 'Add', value: 'add', short: 'a'}
+                            // {name: 'Tag', value: 'tag', short: 't'}
                         ]
                     }])
                     .then(function(answer){
@@ -198,13 +235,6 @@ class Tile {
                         return answer;
                     }, throwOut);
             }, throwOut);
-    }
-
-    addTags(tags) {
-        this.tags = _.union(this.tags, tags);
-    }
-    getImg() {
-
     }
 
     static deserialize(obj) {

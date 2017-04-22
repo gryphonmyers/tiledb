@@ -1,2 +1,5 @@
 .DS_Store
 npm-debug.log
+config.json
+tiledb
+node_modules

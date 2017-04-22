@@ -35,14 +35,14 @@ openConfig()
 
         yargs
             .command({
-                command: 'slice <src> <name> <tileWidth> <tileHeight>',
+                command: 'slice <src> <name> <tileWidth> <tileHeight> [outputPath]',
                 description: 'Add a tileset image to the db',
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
                             return Jimp.read(args.src)
                                 .then(function(imgObj) {
-                                    return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight);
+                                    return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
                                 });
                         }, throwOut)
                 }
@@ -59,12 +59,23 @@ openConfig()
                 }
             })
             .command({
-                command: 'write [outputPath] [tileSheetName] [tagsQuery]',
+                command: 'write [outputPath] [tileSheetName]',
                 description: 'Writes tiles in db to files',
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
-                            return tileDB.write(args.outputPath || config.outputPath, args.tileSheetName, args.tagsQuery);
+                            return tileDB.write(args.outputPath || config.outputPath, args.tileSheetName);
+                        }, throwOut)
+
+                }
+            })
+            .command({
+                command: 'remove [tileHash]',
+                description: 'Removes tiles from DB by hash or comma-separated hashes.',
+                handler: function(args){
+                    tileDB.init()
+                        .then(function(){
+                            return tileDB.removeTile(args.tileHash.split(","));
                         }, throwOut)
 
                 }

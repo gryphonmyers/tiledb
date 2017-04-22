@@ -18,6 +18,7 @@ class TileDB {
         this.db = new DataStore({ filename: DBPath });
         this.db.loadDatabase = thenify(this.db.loadDatabase);
         this.db.find = thenify(this.db.find);
+        this.db.findOne = thenify(this.db.findOne);
         this.db.insert = thenify(this.db.insert);
         this.db.update = thenify(this.db.update);
         this.db.remove = thenify(this.db.remove);
@@ -37,7 +38,7 @@ class TileDB {
                                 .then(function(tile){
                                     return displayImage(tile.img)
                                         .then(function(){
-                                            console.log(tile.hash, tile.width + "x" + tile.height, "tags:", tile.tags);
+                                            console.log(tile.hash, tile.width + "x" + tile.height);
                                         });
                                 });
                         })
@@ -45,13 +46,42 @@ class TileDB {
             })
     }
 
-    write(outputPath, tileSheetName, tagsQuery) {
+    removeTile(tileHashes) {
+        var self = this;
+        return _.reduce(tileHashes, function(getTilePromise, tileHash){
+            return getTilePromise
+                .then(function(){
+                    return self.db.findOne({hash: tileHash})
+                        .then(function(tile){
+                            return Promise.all([
+                                self.db.remove({hash:tile.hash}),
+                                self.db.update({
+                                        tileSheetName: tile.tileSheetName,
+                                        tileIndex: {
+                                            $gt: tile.tileIndex
+                                        }
+                                    }, {
+                                        $inc: {
+                                            tileIndex: -1
+                                        }
+                                    }, {
+                                        multi: true
+                                    })
+                            ])
+                            .then(function(){
+                                console.log("Removed tile", tile.hash)
+                            })
+                        }, function(){
+                            console.log("Couldn't find a tile mataching", tileHash);
+                        })
+                })
+        }, Promise.resolve());
+    }
+
+    write(outputPath, tileSheetName) {
         var queryObj = {};
         if (tileSheetName) {
             queryObj.tileSheetName = tileSheetName;
-        }
-        if (tagsQuery) {
-            queryObj.tags = JSON.parse(tagsQuery);
         }
         return this.db.find(queryObj)
             .then(function(results){
@@ -77,43 +107,30 @@ class TileDB {
             });
     }
 
-    sliceTileSheet(img, tileSheetName, tileWidth, tileHeight) {
+    sliceTileSheet(img, tileSheetName, tileWidth, tileHeight, outputPath) {
+        if (outputPath) {
+            var rejectedPath = path.join(outputPath, 'Rejected');
+        }
         var self = this;
-        return inquirer.prompt({
-                type: 'input',
-                message: 'Add any comma-separated tags to all tiles in this batch.',
-                name: 'tags'
-            })
-            .then(function(answers){
-                var batchTags = answers.tags ? answers.tags.split(",") : null;
-                return self.db.find({tileSheetName: tileSheetName})
-                    .then(function(results){
-                        var newTiles = Tile.onlyValid(Tile.slice(img, tileSheetName, tileWidth, tileHeight, batchTags));
-
+        return self.db.find({tileSheetName: tileSheetName})
+            .then(function(results){
+                Tile.rejectInvalid(Tile.slice(img, tileSheetName, Number(tileWidth), Number(tileHeight)), rejectedPath)
+                    .then(function(validTiles){
                         return Promise.all(_.map(results, Tile.deserialize))
                             .then(function(oldTiles){
+                                var uniqueNewTiles = _.differenceBy(validTiles, oldTiles, (tile=>tile.hash));
 
-                                // var allTiles = _.uniqBy(oldTiles.concat(newTiles), (tile => tile.hash));
-                                var oldTags = _.intersection.apply(this, _.map(oldTiles, (oldTile=>oldTile.tags)));
+                                var skippedTiles = [];
 
-                                var uniqueNewTiles = _.differenceBy(newTiles, oldTiles, (tile=>tile.hash));
-                                // return _.reduce(uniqueNewTiles)
                                 return _.reduce(uniqueNewTiles, function(promise, tile){
                                         return promise
                                             .then(function(confirmedTiles){
-                                                // console.log('confirmedTiles', confirmedTiles);
                                                 return tile.confirm()
                                                     .then(function(answer){
-                                                        if (answer.confirmTile == 'tag') {
-                                                            return tile.tag(_.uniq(oldTags.concat(tile.tags).concat(batchTags)))
-                                                                .then(function(){
-                                                                    return confirmedTiles.concat(tile);
-                                                                });
-                                                        } else { //assuming add
-                                                            return confirmedTiles.concat(tile);
-                                                        }
+                                                        return confirmedTiles.concat(tile);
                                                     }, function(){
                                                         console.log("Skipping tile.");
+                                                        skippedTiles.push(tile);
                                                         return confirmedTiles;
                                                     });
                                             });
@@ -123,26 +140,34 @@ class TileDB {
                                         var dupes = _.intersectionBy(oldTiles, confirmedTiles, (tile => tile.hash));
                                         var newTiles = _.differenceBy(confirmedTiles, oldTiles, (tile => tile.hash));
                                         return Promise.all(
-                                            _.map(dupes, function(dupe){
-                                                return self.db.update({hash: dupe.hash}, {
-                                                    $set: {
-                                                        tags: dupe.tags
-                                                    }
-                                                });
-                                            }).concat(
-                                                _.map(newTiles, function(newTile){
-                                                    newTile.tileIndex = tileIndex;
-                                                    ++tileIndex;
-                                                    return newTile.serialize()
-                                                        .then(function(serializedTile){
-                                                            return self.db.insert(serializedTile);
-                                                        });
-                                                })
-                                            )
+                                            _.map(newTiles, function(newTile){
+                                                newTile.tileIndex = tileIndex;
+                                                ++tileIndex;
+                                                return newTile.serialize()
+                                                    .then(function(serializedTile){
+                                                        return self.db.insert(serializedTile);
+                                                    });
+                                            })
                                         );
                                     })
                                     .then(function(){
-                                        console.log("Added all tiles from this tilesheet!");
+                                        if (rejectedPath) {
+                                            var skippedDir = path.join(rejectedPath, 'Skipped');
+                                            return mkdirp(skippedDir)
+                                                .then(function(){
+                                                    Promise.all(
+                                                        _.map(skippedTiles, function(tile){
+                                                            return tile.img.write(path.format({dir: skippedDir, base: 'skipped-' + tile.hash + '.png'}));
+                                                        })
+                                                    );
+                                                });
+                                        }
+                                    })
+                                    .then(function(){
+                                        console.log("Done adding tiles to DB.");
+                                        if (outputPath) {
+                                            return self.write(outputPath, tileSheetName);
+                                        }
                                     });
                             })
                     })
