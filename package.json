@@ -1,0 +1,32 @@
+{
+  "name": "tile-db",
+  "version": "0.1.0",
+  "description": "Tool for organizing and processing tiles",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "tileset",
+    "tilemap"
+  ],
+  "author": "Gryphon Myers",
+  "license": "ISC",
+  "dependencies": {
+    "inquirer": "^3.0.6",
+    "jimp": "^0.2.27",
+    "lodash": "^4.17.4",
+    "mkdirp-then": "^1.2.0",
+    "mz": "^2.6.0",
+    "nedb": "^1.8.0",
+    "pad-number": "0.0.4",
+    "picture-tube": "^1.0.0",
+    "slug": "^0.9.1",
+    "streamifier": "^0.1.1",
+    "thenify": "^3.2.1",
+    "yargs": "^7.0.2"
+  },
+  "bin": {
+    "tiledb": "./index.js"
+  }
+}
