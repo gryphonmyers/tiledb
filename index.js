@@ -8,15 +8,29 @@ var throwOut = require('./helpers/throw-out');
 var fs = require('mz/fs');
 var path = require('path');
 
-var config;
-fs.readFile('.config')
-    .then(function(data){
-        config = JSON.parse(data);
-    },function(){
-        config = {DBPath : './', DBFileName: 'tiledb', outputPath: __dirname};
-        return fs.writeFile('.config', JSON.stringify(config));
-    })
-    .then(function(){
+const CONFIG_PATH = './config.json';
+
+
+
+function writeConfig(config) {
+    return fs.writeFile(CONFIG_PATH, JSON.stringify(config))
+        .then(function(){
+            return config;
+        });
+}
+
+function openConfig() {
+    return fs.readFile(CONFIG_PATH)
+        .then(function(data){
+            return JSON.parse(data);
+        },function(){
+            config = {DBPath : './', DBFileName: 'tiledb', outputPath: __dirname};
+            return writeConfig(config);
+        })
+}
+
+openConfig()
+    .then(function(config){
         var tileDB = new TileDB(path.format({dir: config.DBPath, base: config.DBFileName}));
 
         yargs
@@ -69,14 +83,14 @@ fs.readFile('.config')
                                 return fs.rename(oldPath, newPath)
                                     .then(function(){
                                         config.DBPath = args.DBPath;
-                                        return fs.writeFile('.config', JSON.stringify(config))
+                                        return writeConfig(config)
                                             .then(function(){
                                                 console.log("Set DB path to", config.DBPath);
                                             });
                                     }, function(err) {
                                         if (err.code === 'ENOENT') {
                                             config.DBPath = args.DBPath;
-                                            return fs.writeFile('.config', JSON.stringify(config))
+                                            return writeConfig(config)
                                                 .then(function(){
                                                     console.log("Set DB path to", config.DBPath);
                                                 });
@@ -91,7 +105,7 @@ fs.readFile('.config')
                         promise = promise
                             .then(function(){
                                 config.outputPath = args.outputPath;
-                                return fs.writeFile('.config', JSON.stringify(config))
+                                return writeConfig(config)
                                     .then(function(){
                                         console.log("Set default output path to", config.outputPath);
                                     });
