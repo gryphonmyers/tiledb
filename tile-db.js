@@ -46,33 +46,40 @@ class TileDB {
             })
     }
 
-    removeTile(tileHashes) {
+    removeTile(tileSheetName, tileIndices) {
         var self = this;
-        return _.reduce(tileHashes, function(getTilePromise, tileHash){
+        return _.reduce(tileIndices, function(getTilePromise, tileIndex){
             return getTilePromise
                 .then(function(){
-                    return self.db.findOne({hash: tileHash})
+                    return self.db.findOne({
+                            tileIndex: Number(tileIndex),
+                            tileSheetName: tileSheetName
+                        })
                         .then(function(tile){
-                            return Promise.all([
-                                self.db.remove({hash:tile.hash}),
-                                self.db.update({
-                                        tileSheetName: tile.tileSheetName,
-                                        tileIndex: {
-                                            $gt: tile.tileIndex
-                                        }
-                                    }, {
-                                        $inc: {
-                                            tileIndex: -1
-                                        }
-                                    }, {
-                                        multi: true
-                                    })
-                            ])
-                            .then(function(){
-                                console.log("Removed tile", tile.hash)
-                            })
+                            if (tile) {
+                                return Promise.all([
+                                    self.db.remove({tileIndex: tile.tileIndex}),
+                                    self.db.update({
+                                            tileSheetName: tile.tileSheetName,
+                                            tileIndex: {
+                                                $gt: tile.tileIndex
+                                            }
+                                        }, {
+                                            $inc: {
+                                                tileIndex: -1
+                                            }
+                                        }, {
+                                            multi: true
+                                        })
+                                ])
+                                .then(function(){
+                                    console.log("Removed tile", tile.tileIndex, "from", tileSheetName);
+                                })
+                            } else {
+                                console.log("Couldn't find a tile matching", tileIndex, "for", tileSheetName);
+                            }
                         }, function(){
-                            console.log("Couldn't find a tile mataching", tileHash);
+                            console.log("Couldn't find a tile mataching", tileIndex);
                         })
                 })
         }, Promise.resolve());

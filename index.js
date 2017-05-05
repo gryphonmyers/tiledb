@@ -93,12 +93,12 @@ openConfig()
                 }
             })
             .command({
-                command: 'remove [tileHash]',
-                description: 'Removes tiles from DB by hash or comma-separated hashes.',
+                command: 'remove <tileSheetName> [tileIndex]',
+                description: 'Removes tiles from DB by index or comma-separated indices.',
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
-                            return tileDB.removeTile(args.tileHash.split(","));
+                            return tileDB.removeTile(args.tileSheetName, args.tileIndex.split(","));
                         }, throwOut)
 
                 }
