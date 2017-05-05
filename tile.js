@@ -7,8 +7,8 @@ var fs = require('mz/fs');
 var path = require('path');
 var mkdirp = require('mkdirp-then');
 
-const DEFAULT_EMPTY_THRESHOLD = 0.13;
-const DEFAULT_DUPE_THRESHOLD = 0.12;
+const DEFAULT_EMPTY_THRESHOLD = 0.05;
+const DEFAULT_DUPE_THRESHOLD = 0.03;
 
 function decodeBase64Image(dataString) {
     var matches = dataString.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/),
@@ -63,10 +63,10 @@ class Tile {
         return tiles;
     }
 
-    static rejectInvalid(tiles, rejectedPath) {
+    static rejectInvalid(tiles, referenceTiles, rejectedPath) {
         return Tile.filterOutEmpty(tiles, DEFAULT_EMPTY_THRESHOLD, rejectedPath)
             .then(function(nonEmptyTiles){
-                return Tile.dedupe(nonEmptyTiles, DEFAULT_DUPE_THRESHOLD, rejectedPath);
+                return Tile.dedupe(nonEmptyTiles, referenceTiles, DEFAULT_DUPE_THRESHOLD, rejectedPath);
             });
     }
 
@@ -76,7 +76,7 @@ class Tile {
 
         console.log("Filtering out empty tiles...");
         var promise = Promise.resolve();
-        
+
         if (rejectedPath) {
             promise = promise
                 .then(function(){
@@ -124,65 +124,74 @@ class Tile {
             });
     }
 
-    static dedupe(inputTiles, dupeThreshold, rejectedPath) {
+    checkIfDupe(refTile, dupeThreshold) {
         if (_.isUndefined(dupeThreshold)) dupeThreshold = DEFAULT_DUPE_THRESHOLD;
-        console.log("Deduping tiles...");
+        var distance = Jimp.distance(refTile.img, this.img); // perceived distance
+        var diff = Jimp.diff(refTile.img, this.img);         // pixel difference
 
-        var tiles = _.uniqBy(inputTiles, (tile=>tile.hash));
+        if (distance < dupeThreshold && diff.percent < dupeThreshold) {
+            return true;
+        }
+        return false;
+    }
+
+    writeDupePair(dupe, rejectedPath) {
+        var tile = this;
+        var tileName = (tile.tileIndex ? tile.tileIndex : tile.hash);
+        var dupeName = (dupe.tileIndex ? dupe.tileIndex : dupe.hash);
+
+        var dupeDir = path.join(rejectedPath, 'Dupes', tile.tileSheetName, tileName + '-' + dupeName);
+
+        return mkdirp(dupeDir)
+            .then(function(){
+                // console.log(arguments);
+                var tilePath = path.format({dir: dupeDir, base: 'reject-' + tile.tileSheetName + '-' + tileName + '.png'});
+                var dupePath = path.format({dir: dupeDir, base: 'keep-' + dupe.tileSheetName + '-' + dupeName + '.png'});
+                // console.log(tilePath, dupePath);
+                return Promise.all([
+                    tile.img.write(tilePath),
+                    dupe.img.write(dupePath)
+                ]);
+            })
+    }
+
+    static dedupe(inputTiles, referenceTiles, dupeThreshold, rejectedPath) {
+        console.log("Deduping tiles...");
+        var tiles = inputTiles;
         var checked = {};
         var dupeTiles = {};
         var result = [];
-        var promise = Promise.resolve();
-        if (rejectedPath) {
-            promise = promise
-                .then(function(){
-                    var emptyDir = path.join(rejectedPath, 'Dupes');
-                    return mkdirp(emptyDir)
-                        .then(function(){
-                            return emptyDir;
-                        });
-                });
-        }
         var writePromises = [];
+
+        var tilesToCheck = tiles.concat(referenceTiles);
+
         for (var ii = 0; ii < tiles.length; ++ii) {
-            for (var jj = 0; jj < tiles.length; ++jj) {
+            for (var jj = 0; jj < tilesToCheck.length; ++jj) {
                 if (ii != jj && !(checked[ii] && checked[ii][jj])) {
-                    var distance = Jimp.distance(tiles[jj].img, tiles[ii].img); // perceived distance
-                    var diff = Jimp.diff(tiles[jj].img, tiles[ii].img);         // pixel difference
-
-                    if (!(jj in checked)) {
-                        checked[jj] = {};
-                    }
-                    checked[jj][ii] = 1;
-
-                    if (distance < dupeThreshold && diff.percent < dupeThreshold) {
-                        if (rejectedPath) {
-                            (function(ii,jj){
-                                writePromises.push(
-                                    promise
-                                        .then(function(dupeDir){
-                                            return tiles[ii].img.write(path.format({dir: dupeDir, base: tiles[ii].hash + '-dupe-of-' + tiles[jj].hash + '.png'}));
-                                        })
-                                )
-                            })(ii,jj);
+                    if (jj < tiles.length) {
+                        if (!(jj in checked)) {
+                            checked[jj] = {};
                         }
+                        checked[jj][ii] = 1;
+                    }
+                    if (tiles[ii].checkIfDupe(tilesToCheck[jj], dupeThreshold)) {
                         dupeTiles[ii] = jj;
+                        if (rejectedPath) {
+                            writePromises.push(tiles[ii].writeDupePair(tilesToCheck[jj], rejectedPath));
+                        }
                         break;
                     }
                 }
-
             }
+
             if (!(ii in dupeTiles)) {
                 result.push(tiles[ii]);
             }
         }
 
-        return promise
+        return Promise.all(writePromises)
             .then(function(){
-                return Promise.all(writePromises);
-            })
-            .then(function(){
-                console.log("Removed", inputTiles.length - result.length, "dupes.");
+                console.log("Removed", _.keys(dupeTiles).length, "dupes.");
                 return result;
             });
     }

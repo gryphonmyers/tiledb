@@ -94,7 +94,7 @@ class TileDB {
                                 .then(function(){
                                     var tilePath = path.format({
                                         dir: tileDir,
-                                        name: tile.tileSheetName + '-'  + padNumber(tile.tileIndex + 1, 2) + '-' + tile.hash,
+                                        name: tile.tileSheetName + '-'  + padNumber(tile.tileIndex + 1, 2),
                                         ext: '.png'
                                     });
                                     return tile.img.write(tilePath);
@@ -107,22 +107,31 @@ class TileDB {
             });
     }
 
-    sliceTileSheet(img, tileSheetName, tileWidth, tileHeight, outputPath) {
+    sliceTileSheet(imgs, tileSheetName, tileWidth, tileHeight, outputPath) {
         if (outputPath) {
             var rejectedPath = path.join(outputPath, 'Rejected');
+        }
+        if (!Array.isArray(imgs)) {
+            imgs = [imgs];
         }
         var self = this;
         return self.db.find({tileSheetName: tileSheetName})
             .then(function(results){
-                Tile.rejectInvalid(Tile.slice(img, tileSheetName, Number(tileWidth), Number(tileHeight)), rejectedPath)
-                    .then(function(validTiles){
-                        return Promise.all(_.map(results, Tile.deserialize))
-                            .then(function(oldTiles){
-                                var uniqueNewTiles = _.differenceBy(validTiles, oldTiles, (tile=>tile.hash));
+                return Promise.all(_.map(results, Tile.deserialize))
+                    .then(function(oldTiles){
+                        return Tile.rejectInvalid(
+                                _.flatMap(imgs, function(img){
+                                    return Tile.slice(img, tileSheetName, Number(tileWidth), Number(tileHeight))
+                                }),
+                                oldTiles,
+                                rejectedPath
+                            )
+                            .then(function(validTiles){
+                                validTiles = _.difference(validTiles, oldTiles);
 
                                 var skippedTiles = [];
 
-                                return _.reduce(uniqueNewTiles, function(promise, tile){
+                                return _.reduce(validTiles, function(promise, tile){
                                         return promise
                                             .then(function(confirmedTiles){
                                                 return tile.confirm()
@@ -137,10 +146,9 @@ class TileDB {
                                     }, Promise.resolve([]))
                                     .then(function(confirmedTiles){
                                         var tileIndex = results.length;
-                                        var dupes = _.intersectionBy(oldTiles, confirmedTiles, (tile => tile.hash));
-                                        var newTiles = _.differenceBy(confirmedTiles, oldTiles, (tile => tile.hash));
+
                                         return Promise.all(
-                                            _.map(newTiles, function(newTile){
+                                            _.map(confirmedTiles, function(newTile){
                                                 newTile.tileIndex = tileIndex;
                                                 ++tileIndex;
                                                 return newTile.serialize()

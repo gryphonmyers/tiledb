@@ -29,6 +29,10 @@ function openConfig() {
         })
 }
 
+function readImageFile(src) {
+
+}
+
 openConfig()
     .then(function(config){
         var tileDB = new TileDB(path.format({dir: config.DBPath, base: config.DBFileName}));
@@ -40,10 +44,29 @@ openConfig()
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
-                            return Jimp.read(args.src)
-                                .then(function(imgObj) {
-                                    return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
-                                });
+                            return fs.lstat(args.src)
+                                .then(function(stats){
+                                    if (stats.isDirectory()) {
+                                        return fs.readdir(args.src)
+                                            .then(function(filePaths){
+                                                return Promise.all(
+                                                    _.map(filePaths, function(filePath){
+                                                        return Jimp.read(path.format({dir: args.src, base: filePath}));
+                                                    })
+                                                )
+                                                .then(function(imgs){
+                                                    return tileDB.sliceTileSheet(imgs, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
+                                                })
+                                            })
+                                    } else if (stats.isFile()) {
+                                        return Jimp.read(args.src)
+                                            .then(function(imgObj) {
+                                                return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
+                                            }, function(){
+                                                console.log('Skipping non-image.');
+                                            });
+                                    }
+                                }, throwOut)
                         }, throwOut)
                 }
             })
