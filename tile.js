@@ -24,7 +24,6 @@ function decodeBase64Image(dataString) {
     return response;
 }
 
-
 class Tile {
 
     constructor(img, tileSheetName, width, height, tags, tileIndex) {
@@ -195,34 +194,6 @@ class Tile {
                 return result;
             });
     }
-
-    // tag(tags) {
-    //     var self = this;
-    //     return inquirer.prompt([{
-    //             type: 'input',
-    //             name: 'addedTags',
-    //             message: 'Add case-insensitive, comma-separated tags (orientation, material, theme, etc.).',
-    //             default: tags && tags.length ? tags.join(',') : ''
-    //         }])
-    //         .then(function(answer){
-    //             if (answer.addedTags) {
-    //                 var tags = _.map(_.union(self.tags, answer.addedTags.split(',')), (string => string.toLowerCase().trim()));
-    //                 return inquirer.prompt([{
-    //                         type: 'confirm',
-    //                         name: 'confirmTags',
-    //                         message: 'New tags will be: ' + tags.join(", "),
-    //                         default: 'y'
-    //                     }])
-    //                     .then(function(answer){
-    //                         if (answer.confirmTags) {
-    //                             self.tags = tags;
-    //                         } else {
-    //                             return self.tag();
-    //                         }
-    //                     })
-    //             }
-    //         });
-    // }
 
     confirm() {
         var self = this;
