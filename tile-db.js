@@ -52,17 +52,17 @@ class TileDB {
             return getTilePromise
                 .then(function(){
                     return self.db.findOne({
-                            tileIndex: Number(tileIndex),
+                            tileIndex: Number(tileIndex - 1),
                             tileSheetName: tileSheetName
                         })
                         .then(function(tile){
                             if (tile) {
                                 return Promise.all([
-                                    self.db.remove({tileIndex: tile.tileIndex}),
+                                    self.db.remove({tileIndex: tile.tileIndex - 1}),
                                     self.db.update({
                                             tileSheetName: tile.tileSheetName,
                                             tileIndex: {
-                                                $gt: tile.tileIndex
+                                                $gt: tile.tileIndex - 1
                                             }
                                         }, {
                                             $inc: {
