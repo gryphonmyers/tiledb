@@ -1,6 +1,6 @@
 {
   "name": "tile-db",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Tool for organizing and processing tiles",
   "main": "index.js",
   "scripts": {
