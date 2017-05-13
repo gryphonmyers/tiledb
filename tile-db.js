@@ -12,6 +12,7 @@ var slug = require('slug')
 var path = require('path');
 var padNumber = require('pad-number');
 var mkdirp = require('mkdirp-then');
+var del = require('del');
 
 class TileDB {
     constructor(DBPath) {
@@ -46,7 +47,7 @@ class TileDB {
             })
     }
 
-    removeTile(tileSheetName, tileIndices) {
+    removeTile(tileSheetName, tileIndices, outputPath) {
         var self = this;
         return _.reduce(tileIndices, function(getTilePromise, tileIndex){
             return getTilePromise
@@ -58,11 +59,11 @@ class TileDB {
                         .then(function(tile){
                             if (tile) {
                                 return Promise.all([
-                                    self.db.remove({tileIndex: tile.tileIndex - 1}),
+                                    self.db.remove({tileIndex: tile.tileIndex}),
                                     self.db.update({
                                             tileSheetName: tile.tileSheetName,
                                             tileIndex: {
-                                                $gt: tile.tileIndex - 1
+                                                $gt: tile.tileIndex
                                             }
                                         }, {
                                             $inc: {
@@ -73,7 +74,7 @@ class TileDB {
                                         })
                                 ])
                                 .then(function(){
-                                    console.log("Removed tile", tile.tileIndex, "from", tileSheetName);
+                                    console.log("Removed tile", tile.tileIndex + 1, "from", tileSheetName);
                                 })
                             } else {
                                 console.log("Couldn't find a tile matching", tileIndex, "for", tileSheetName);
@@ -82,7 +83,10 @@ class TileDB {
                             console.log("Couldn't find a tile mataching", tileIndex);
                         })
                 })
-        }, Promise.resolve());
+        }, Promise.resolve())
+            .then(function(){
+                return self.write(outputPath, tileSheetName);
+            });
     }
 
     write(outputPath, tileSheetName) {
@@ -96,15 +100,17 @@ class TileDB {
                     return Tile.deserialize(result)
                         .then(function(tile){
                             var tileDir = path.join(outputPath, tile.tileSheetName);
-
-                            return mkdirp(tileDir)
+                            return del(tileDir, {force:true})
                                 .then(function(){
-                                    var tilePath = path.format({
-                                        dir: tileDir,
-                                        name: tile.tileSheetName + '-'  + padNumber(tile.tileIndex + 1, 2),
-                                        ext: '.png'
-                                    });
-                                    return tile.img.write(tilePath);
+                                    return mkdirp(tileDir)
+                                        .then(function(){
+                                            var tilePath = path.format({
+                                                dir: tileDir,
+                                                name: tile.tileSheetName + '-'  + padNumber(tile.tileIndex + 1, 2),
+                                                ext: '.png'
+                                            });
+                                            return tile.img.write(tilePath);
+                                        });
                                 });
                         });
                 }))
