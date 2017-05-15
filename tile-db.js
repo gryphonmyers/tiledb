@@ -49,41 +49,36 @@ class TileDB {
 
     removeTile(tileSheetName, tileIndices, outputPath) {
         var self = this;
-        return _.reduce(tileIndices, function(getTilePromise, tileIndex){
-            return getTilePromise
-                .then(function(){
-                    return self.db.findOne({
-                            tileIndex: Number(tileIndex - 1),
-                            tileSheetName: tileSheetName
-                        })
-                        .then(function(tile){
-                            if (tile) {
-                                return Promise.all([
-                                    self.db.remove({tileIndex: tile.tileIndex}),
-                                    self.db.update({
-                                            tileSheetName: tile.tileSheetName,
-                                            tileIndex: {
-                                                $gt: tile.tileIndex
-                                            }
-                                        }, {
-                                            $inc: {
-                                                tileIndex: -1
-                                            }
-                                        }, {
-                                            multi: true
-                                        })
-                                ])
-                                .then(function(){
-                                    console.log("Removed tile", tile.tileIndex + 1, "from", tileSheetName);
-                                })
-                            } else {
-                                console.log("Couldn't find a tile matching", tileIndex, "for", tileSheetName);
-                            }
-                        }, function(){
-                            console.log("Couldn't find a tile mataching", tileIndex);
-                        })
-                })
-        }, Promise.resolve())
+        if (!tileIndices) {
+            var promise = self.db.remove({tileSheetName: tileSheetName}, {multi:true});
+        } else {
+            tileIndices.sort(function(a,b){
+                return b - a;
+            });
+            tileIndices = _.uniq(tileIndices);
+
+            promise = self.db.remove({ tileIndex: { $in: _.map(tileIndices, (index => Number(index) - 1)) }}, {multi:true})
+                .then(function(result){
+                    console.log("Removed 3 tiles.");
+                    return  _.reduce(tileIndices, function(getTilePromise, tileIndex){
+                        return self.db.update({
+                                tileSheetName: tileSheetName,
+                                tileIndex: {
+                                    $gt: tileIndex - 1
+                                }
+                            }, {
+                                $inc: {
+                                    tileIndex: -1
+                                }
+                            }, {
+                                multi: true
+                            });
+                    }, Promise.resolve());
+                }, function(err){
+                    console.error("Failed to remove tiles.", err);
+                });
+        }
+        return promise
             .then(function(){
                 return self.write(outputPath, tileSheetName);
             });
@@ -96,11 +91,12 @@ class TileDB {
         }
         return this.db.find(queryObj)
             .then(function(results){
+                var tileDir = path.join(outputPath, tileSheetName);
+                var deletePromise = del(tileDir, {force:true});
                 return Promise.all(_.map(results, function(result, key){
                     return Tile.deserialize(result)
                         .then(function(tile){
-                            var tileDir = path.join(outputPath, tile.tileSheetName);
-                            return del(tileDir, {force:true})
+                            return deletePromise
                                 .then(function(){
                                     return mkdirp(tileDir)
                                         .then(function(){

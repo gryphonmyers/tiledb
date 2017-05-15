@@ -98,7 +98,7 @@ openConfig()
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
-                            return tileDB.removeTile(args.tileSheetName, args.tileIndex.toString().split(","), config.outputPath);
+                            return tileDB.removeTile(args.tileSheetName, args.tileIndex ? args.tileIndex.toString().split(",") : null, config.outputPath);
                         }, throwOut)
 
                 }
