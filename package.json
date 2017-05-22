@@ -22,6 +22,7 @@
     "nedb": "^1.8.0",
     "pad-number": "0.0.4",
     "picture-tube": "^1.0.0",
+    "recursive-readdir": "^2.2.1",
     "slug": "^0.9.1",
     "streamifier": "^0.1.1",
     "thenify": "^3.2.1",

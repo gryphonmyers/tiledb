@@ -6,7 +6,9 @@ var TileDB = require('./tile-db');
 var Jimp = require('jimp');
 var throwOut = require('./helpers/throw-out');
 var fs = require('mz/fs');
+var recursiveReadDir = require('recursive-readdir');
 var path = require('path');
+var Tile = require('./tile');
 
 const CONFIG_PATH = './config.json';
 
@@ -39,35 +41,85 @@ openConfig()
 
         yargs
             .command({
-                command: 'slice <src> <name> <tileWidth> <tileHeight> [outputPath]',
-                description: 'Add a tileset image to the db',
+                command: 'add <src> <tileSheetName>',
+                description: 'Add a tile image to the db',
                 handler: function(args){
                     tileDB.init()
                         .then(function(){
                             return fs.lstat(args.src)
                                 .then(function(stats){
+                                    var promise;
+
                                     if (stats.isDirectory()) {
-                                        return fs.readdir(args.src)
-                                            .then(function(filePaths){
-                                                return Promise.all(
-                                                    _.map(filePaths, function(filePath){
-                                                        return Jimp.read(path.format({dir: args.src, base: filePath}));
-                                                    })
-                                                )
-                                                .then(function(imgs){
-                                                    return tileDB.sliceTileSheet(imgs, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
-                                                })
-                                            })
-                                    } else if (stats.isFile()) {
-                                        return Jimp.read(args.src)
-                                            .then(function(imgObj) {
-                                                return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath);
-                                            }, function(){
-                                                console.log('Skipping non-image.');
-                                            });
+                                        promise = recursiveReadDir(args.src, [function(file, stats) {
+                                            return stats.isDirectory() || !_.includes(['.png', '.jpg'], path.extname(file));
+                                        }]);
+                                    } else {
+                                        promise = Promise.resolve([args.src]);
                                     }
-                                }, throwOut)
+
+                                    return promise
+                                        .then(function(filePaths){
+                                            return _.reduce(filePaths, function(promise, filePath){
+                                                return promise.then(function(){
+                                                    return Jimp.read(filePath)
+                                                        .then(function(imgObj) {
+                                                            return tileDB.addTile(new Tile(
+                                                                imgObj,
+                                                                args.tileSheetName,
+                                                                imgObj.bitmap.width,
+                                                                imgObj.bitmap.height
+                                                            ));
+                                                        });
+                                                    });
+                                            }, Promise.resolve());
+                                        });
+                                });
                         }, throwOut)
+                }
+            })
+            .command({
+                command: 'slice <src> <name> <tileWidth> <tileHeight> [outputPath]',
+                description: 'Slice a tileset image and add all sliced tiles to the DB',
+                handler: function(args){
+                    tileDB.init()
+                        .then(function(){
+                            return fs.lstat(args.src)
+                                .then(function(stats){
+                                    var promise;
+
+                                    if (stats.isDirectory()) {
+                                        promise = recursiveReadDir(args.src, [function(file, stats) {
+                                            return stats.isDirectory() || !_.includes(['.png', '.jpg'], path.extname(file));
+                                        }]);
+                                    } else {
+                                        promise = Promise.resolve([args.src]);
+                                    }
+
+                                    return promise.then(function(filePaths){
+                                        return _.reduce(filePaths, function(promise, filePath){
+                                            return promise.then(function(){
+                                                return Jimp.read(filePath)
+                                                    .then(function(imgObj) {
+                                                        return tileDB.sliceTileSheet(imgObj, args.name, args.tileWidth, args.tileHeight, args.outputPath || config.outputPath, args.skipAudit, args.skipValidation);
+                                                    });
+                                            });
+                                        }, Promise.resolve());
+                                    }, throwOut);
+                                });
+                        }, throwOut)
+                },
+                builder: {
+                    'skipValidation': {
+                        alias: 'v',
+                        default: false,
+                        type: 'boolean'
+                    },
+                    'skipAudit': {
+                        alias: 'a',
+                        default: false,
+                        type: 'boolean'
+                    }
                 }
             })
             .command({
@@ -82,7 +134,7 @@ openConfig()
                 }
             })
             .command({
-                command: 'write [outputPath] [tileSheetName]',
+                command: 'write [tileSheetName]',
                 description: 'Writes tiles in db to files',
                 handler: function(args){
                     tileDB.init()
@@ -90,6 +142,11 @@ openConfig()
                             return tileDB.write(args.outputPath || config.outputPath, args.tileSheetName);
                         }, throwOut)
 
+                },
+                builder: {
+                    outputPath: {
+                        alias: 'o'
+                    }
                 }
             })
             .command({
