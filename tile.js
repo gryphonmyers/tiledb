@@ -42,10 +42,11 @@ class Tile {
         var remainingHeight = img.bitmap.height;
         console.log("Slicing tiles...");
 
-        while (remainingWidth > 0) {
-            var tileWidth = Math.min(maxTileWidth, remainingWidth);
-            while (remainingHeight > 0) {
-                var tileHeight = Math.min(maxTileHeight, remainingHeight);
+        while (remainingHeight > 0) {
+            var tileHeight = Math.min(maxTileHeight, remainingHeight);
+            
+            while (remainingWidth > 0) {
+                var tileWidth = Math.min(maxTileWidth, remainingWidth);
 
                 tiles.push(new Tile(
                     img.clone().crop(remainingWidth - tileWidth, remainingHeight - tileHeight, tileWidth, tileHeight),
@@ -54,10 +55,10 @@ class Tile {
                     tileHeight,
                     tags
                 ));
-                remainingHeight -= tileHeight;
+                remainingWidth -= tileWidth;
             }
-            remainingWidth -= tileWidth;
-            remainingHeight = img.bitmap.height;
+            remainingHeight -= tileHeight;
+            remainingWidth = img.bitmap.width;
         }
         return tiles;
     }
